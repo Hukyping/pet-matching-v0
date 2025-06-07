@@ -986,30 +986,30 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
   )
 
   // 네이버 지도 API 스크립트 로드 및 위치 정보 가져오기
-  useEffect(() => {
-    if (activeTab !== 4) return
+    // useEffect(() => {
+    //   if (activeTab !== 4) return
 
-    const loadNaverMapsScript = () => {
-      if (typeof window !== "undefined" && !(window as any).naver) {
-        const script = document.createElement("script")
-        script.type = "text/javascript"
-        script.src = "https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=wthem1ducp"
-        script.async = true
-        script.onload = () => {
-          console.log("네이버 지도 API 로딩 완료")
-          setLocationData((prev) => ({ ...prev, mapLoaded: true }))
-        }
-        script.onerror = () => {
-          console.error("네이버 지도 API 로딩 실패")
-        }
-        document.head.appendChild(script)
-      } else if ((window as any).naver) {
-        console.log("네이버 지도 API 이미 로딩됨")
-        setLocationData((prev) => ({ ...prev, mapLoaded: true }))
-      }
-    }
+    //   const loadNaverMapsScript = () => {
+    //     if (typeof window !== "undefined" && !(window as any).naver) {
+    //       const script = document.createElement("script")
+    //       script.type = "text/javascript"
+    //       script.src = "https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=wthem1ducp"
+    //       script.async = true
+    //       script.onload = () => {
+    //         console.log("네이버 지도 API 로딩 완료")
+    //         setLocationData((prev) => ({ ...prev, mapLoaded: true }))
+    //       }
+    //       script.onerror = () => {
+    //         console.error("네이버 지도 API 로딩 실패")
+    //       }
+    //       document.head.appendChild(script)
+    //     } else if ((window as any).naver) {
+    //       console.log("네이버 지도 API 이미 로딩됨")
+    //       setLocationData((prev) => ({ ...prev, mapLoaded: true }))
+    //     }
+    //   }
 
-    loadNaverMapsScript()
+    //   loadNaverMapsScript()
 
     // 현재 위치 가져오기
     if (navigator.geolocation) {
