@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider"
 import { Textarea } from "@/components/ui/textarea"
 import Image from "next/image"
+import * as XLSX from "xlsx"
 
 interface UpdateProfileProps {
   onClose: () => void
@@ -15,9 +16,14 @@ interface UpdateProfileProps {
   initialData?: any
 }
 
+interface DogLocation {
+  lat: number
+  lon: number
+  id: string
+}
+
 export default function UpdateProfile({ onClose, onComplete, initialData }: UpdateProfileProps) {
   // Initialize states with saved data if available
-  // 초기 데이터 안전하게 가져오기
   const [activeTab, setActiveTab] = useState(initialData?.activeTab || 0)
   const [images, setImages] = useState<string[]>(initialData?.images || [])
   const [vaccinationCertificate, setVaccinationCertificate] = useState<string | null>(
@@ -25,7 +31,7 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
   )
   const [certificateFileName, setCertificateFileName] = useState<string>(initialData?.certificateFileName || "")
 
-  // 프로필 데이터 초기화 - 안전하게 기본값 설정
+  // 프로필 데이터 초기화
   const [profileData, setProfileData] = useState({
     breed: initialData?.profileData?.breed || "선택",
     gender: initialData?.profileData?.gender || "",
@@ -37,7 +43,7 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
     mateType: initialData?.profileData?.mateType || [],
   })
 
-  // 이상형 데이터 초기화 - 안전하게 기본값 설정
+  // 이상형 데이터 초기화
   const [idealTypeData, setIdealTypeData] = useState({
     preferredGender: initialData?.idealTypeData?.preferredGender || "",
     preferredAgeRange: initialData?.idealTypeData?.preferredAgeRange || [1, 40],
@@ -47,7 +53,7 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
     preferredMateType: initialData?.idealTypeData?.preferredMateType || [],
   })
 
-  // 주인 데이터 초기화 - 안전하게 기본값 설정
+  // 주인 데이터 초기화
   const [ownerData, setOwnerData] = useState({
     nickname: initialData?.ownerData?.nickname || "",
     gender: initialData?.ownerData?.gender || "",
@@ -56,21 +62,27 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
     appeal: initialData?.ownerData?.appeal || "",
   })
 
-  // 위치 데이터 초기화 - 안전하게 기본값 설정
+  // 위치 데이터 초기화 - 로딩 상태 개선
   const [locationData, setLocationData] = useState({
     nearbyRange: initialData?.locationData?.nearbyRange || "가까운 동네",
     selectedLocation: initialData?.locationData?.selectedLocation || "평창동",
     latitude: initialData?.locationData?.latitude || 37.5666805,
     longitude: initialData?.locationData?.longitude || 126.9784147,
     accuracy: initialData?.locationData?.accuracy || 0,
-    mapLoaded: initialData?.locationData?.mapLoaded || false,
+    mapLoaded: false, // 항상 false로 시작
+    zoomLevel: initialData?.locationData?.zoomLevel || 15,
   })
 
   const [representativeImageIndex, setRepresentativeImageIndex] = useState<number>(
     initialData?.representativeImageIndex >= 0 ? initialData.representativeImageIndex : 0,
   )
 
-  // 탭 변경 시 스크롤을 상단으로 이동시키는 효과
+  // 로딩 상태 관리 개선
+  const [dogLocations, setDogLocations] = useState<DogLocation[]>([])
+  const [isLoadingDogData, setIsLoadingDogData] = useState(false)
+  const [dogDataError, setDogDataError] = useState<string | null>(null)
+
+  // 탭 변경 시 스크롤을 상단으로 이동
   useEffect(() => {
     window.scrollTo({
       top: 0,
@@ -119,6 +131,76 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
     "표현력",
   ]
 
+  // 강아지 위치 데이터 로딩 함수 개선
+  const loadDogLocations = async () => {
+    if (isLoadingDogData) return // 이미 로딩 중이면 중복 실행 방지
+
+    setIsLoadingDogData(true)
+    setDogDataError(null)
+
+    try {
+      console.log("강아지 위치 데이터 로딩 시작...")
+
+      // 타임아웃 설정 (10초)
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("로딩 타임아웃")), 10000))
+
+      const fetchPromise = fetch("/dog_dummy_data_1200_with_gps_final.xlsx")
+
+      const response = (await Promise.race([fetchPromise, timeoutPromise])) as Response
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const arrayBuffer = await response.arrayBuffer()
+      console.log("Excel 파일 로딩 완료, 크기:", arrayBuffer.byteLength)
+
+      const workbook = XLSX.read(arrayBuffer, { type: "array" })
+      const sheetName = workbook.SheetNames[0]
+      const worksheet = workbook.Sheets[sheetName]
+      const jsonData = XLSX.utils.sheet_to_json(worksheet)
+
+      console.log("Excel 데이터 파싱 완료, 행 수:", jsonData.length)
+
+      const locations: DogLocation[] = jsonData
+        .map((row: any, index: number) => {
+          const lat = Number.parseFloat(row.lat || row.latitude || row.LAT || row.LATITUDE || row["위도"])
+          const lon = Number.parseFloat(row.lon || row.longitude || row.LON || row.LONGITUDE || row["경도"])
+
+          return {
+            lat,
+            lon,
+            id: `dog-${index}`,
+          }
+        })
+        .filter((location) => !isNaN(location.lat) && !isNaN(location.lon))
+
+      console.log("유효한 강아지 위치 수:", locations.length)
+      setDogLocations(locations)
+    } catch (error) {
+      console.error("강아지 위치 데이터 로딩 실패:", error)
+      setDogDataError(error instanceof Error ? error.message : "알 수 없는 오류")
+
+      // 에러 시 더미 데이터 사용
+      const dummyLocations: DogLocation[] = [
+        { lat: 37.5665, lon: 126.978, id: "dummy-1" },
+        { lat: 37.5675, lon: 126.979, id: "dummy-2" },
+        { lat: 37.5655, lon: 126.977, id: "dummy-3" },
+        { lat: 37.5685, lon: 126.98, id: "dummy-4" },
+        { lat: 37.5645, lon: 126.976, id: "dummy-5" },
+      ]
+      console.log("더미 데이터 사용:", dummyLocations)
+      setDogLocations(dummyLocations)
+    } finally {
+      setIsLoadingDogData(false)
+    }
+  }
+
+  // 컴포넌트 마운트 시 강아지 데이터 로딩
+  useEffect(() => {
+    loadDogLocations()
+  }, []) // 한 번만 실행
+
   const isProfileValid = () => {
     return profileData.breed !== "선택" && profileData.name.trim() !== ""
   }
@@ -146,7 +228,6 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
     const filesToAdd = Array.from(files).slice(0, remainingSlots)
     const newImageUrls = filesToAdd.map((file) => URL.createObjectURL(file))
 
-    // 첫 번째 이미지가 추가될 때 대표 사진으로 설정
     if (images.length === 0 && newImageUrls.length > 0) {
       setRepresentativeImageIndex(0)
     }
@@ -162,14 +243,12 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
     const file = e.target.files?.[0]
     if (!file) return
 
-    // 파일 타입 검증 (이미지 또는 PDF)
     const allowedTypes = ["image/jpeg", "image/png", "image/jpg", "application/pdf"]
     if (!allowedTypes.includes(file.type)) {
       alert("이미지 파일(JPG, PNG) 또는 PDF 파일만 업로드 가능합니다.")
       return
     }
 
-    // 파일 크기 검증 (10MB 제한)
     if (file.size > 10 * 1024 * 1024) {
       alert("파일 크기는 10MB 이하여야 합니다.")
       return
@@ -202,12 +281,9 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
     newImages.splice(index, 1)
     setImages(newImages)
 
-    // 대표 사진이 삭제된 경우
     if (index === representativeImageIndex) {
-      // 첫 번째 사진을 새로운 대표 사진으로 설정 (사진이 남아있는 경우)
       setRepresentativeImageIndex(newImages.length > 0 ? 0 : -1)
     } else if (index < representativeImageIndex) {
-      // 대표 사진보다 앞의 사진이 삭제된 경우 인덱스 조정
       setRepresentativeImageIndex(representativeImageIndex - 1)
     }
   }
@@ -221,41 +297,56 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
   }
 
   const handleNext = () => {
-    console.log(`현재 탭: ${activeTab}, 다음 탭으로 이동 시도`)
-
-    if (activeTab === 1 && !isProfileValid()) {
-      console.log("프로필 유효성 검사 실패")
+    if (activeTab === 0) {
+      setActiveTab(1)
       return
     }
 
-    if (activeTab === 2 && !isIdealTypeValid()) {
-      console.log("이상형 유효성 검사 실패")
+    if (activeTab === 1) {
+      if (!isProfileValid()) {
+        alert("품종과 이름을 입력해주세요!")
+        return
+      }
+      setActiveTab(2)
       return
     }
 
-    if (activeTab === 3 && !isOwnerInfoValid()) {
-      console.log("주인정보 유효성 검사 실패")
+    if (activeTab === 2) {
+      if (!isIdealTypeValid()) {
+        alert("이상형 정보를 모두 입력해주세요!")
+        return
+      }
+      setActiveTab(3)
       return
     }
 
-    if (activeTab < tabs.length - 1) {
-      setActiveTab(activeTab + 1)
-      console.log(`탭 이동: ${activeTab} -> ${activeTab + 1}`)
-    } else {
+    if (activeTab === 3) {
+      if (!isOwnerInfoValid()) {
+        alert("주인정보를 모두 입력해주세요!")
+        return
+      }
+      setActiveTab(4)
+      return
+    }
+
+    if (activeTab === 4) {
       console.log("프로필 작성 완료! 미리보기 화면으로 이동합니다.")
 
-      // 데이터 구조를 일관되게 유지
+      // 지도 데이터가 로드되지 않아도 진행 가능하도록 함
       const completeData = {
         activeTab: activeTab,
         profileData: profileData,
         idealTypeData: idealTypeData,
         ownerData: ownerData,
-        locationData: locationData,
+        locationData: {
+          ...locationData,
+          // 지도가 로드되지 않았어도 mapLoaded를 true로 설정하여 다음 화면에서 문제 없도록 함
+          mapLoaded: true,
+        },
         images: images,
         representativeImageIndex: representativeImageIndex,
         vaccinationCertificate: vaccinationCertificate,
         certificateFileName: certificateFileName,
-        // 이전 코드와의 호환성을 위해 추가
         profile: profileData,
         idealType: idealTypeData,
         owner: ownerData,
@@ -263,10 +354,8 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
       }
 
       console.log("onComplete 함수 호출, 전달 데이터:", completeData)
-
-      setTimeout(() => {
-        onComplete(completeData)
-      }, 100)
+      onComplete(completeData)
+      return
     }
   }
 
@@ -313,7 +402,7 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
   }
 
   const renderPhotoTab = () => (
-    <div className="px-6 py-8 pb-32">
+    <div className="px-6 py-8 pb-24">
       <h2 className="text-2xl font-bold text-black mb-8">반려동물 사진 등록</h2>
 
       <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" multiple className="hidden" />
@@ -364,7 +453,7 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
       {images.length < 5 && (
         <div
           onClick={handleUploadClick}
-          className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center mb-8 cursor-pointer hover:bg-gray-50 transition-colors"
+          className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center mb-6 cursor-pointer hover:bg-gray-50 transition-colors"
         >
           <div className="flex flex-col items-center space-y-4">
             <div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center">
@@ -379,13 +468,13 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
       )}
 
       {images.length === 5 && (
-        <div className="text-center text-green-600 font-medium mb-8">최대 업로드 수에 도달했습니다 (5/5)</div>
+        <div className="text-center text-green-600 font-medium mb-6">최대 업로드 수에 도달했습니다 (5/5)</div>
       )}
     </div>
   )
 
   const renderProfileTab = () => (
-    <div className="px-6 py-8 pb-32">
+    <div className="px-6 py-8 pb-4">
       <h2 className="text-2xl font-bold text-black mb-8">반려동물 프로필 등록</h2>
 
       <div className="space-y-6">
@@ -471,14 +560,16 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
             <label className="text-lg font-medium text-black">나이(월령)</label>
             <span className="text-lg font-medium">{profileData.age[0]}개월</span>
           </div>
-          <Slider
-            value={profileData.age}
-            onValueChange={(value) => setProfileData({ ...profileData, age: value })}
-            max={120}
-            min={1}
-            step={1}
-            className="w-full"
-          />
+          <div className="mt-6">
+            <Slider
+              value={profileData.age}
+              onValueChange={(value) => setProfileData({ ...profileData, age: value })}
+              max={120}
+              min={1}
+              step={1}
+              className="w-full"
+            />
+          </div>
         </div>
 
         {/* 몸무게 */}
@@ -487,14 +578,16 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
             <label className="text-lg font-medium text-black">몸무게</label>
             <span className="text-lg font-medium">{profileData.weight[0]}kg</span>
           </div>
-          <Slider
-            value={profileData.weight}
-            onValueChange={(value) => setProfileData({ ...profileData, weight: value })}
-            max={50}
-            min={0.1}
-            step={0.1}
-            className="w-full"
-          />
+          <div className="mt-6">
+            <Slider
+              value={profileData.weight}
+              onValueChange={(value) => setProfileData({ ...profileData, weight: value })}
+              max={50}
+              min={0.1}
+              step={0.1}
+              className="w-full"
+            />
+          </div>
         </div>
 
         {/* 모색 */}
@@ -509,11 +602,11 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
               <button
                 key={colorOption.name}
                 onClick={() => setProfileData({ ...profileData, color: colorOption.name })}
-                className={`h-16 rounded-lg border-2 flex items-center justify-center ${
+                className={`h-10 rounded-lg border-2 flex items-center justify-center ${
                   profileData.color === colorOption.name ? "border-black" : "border-gray-300"
                 }`}
               >
-                <div className="w-8 h-8 rounded-full" style={{ backgroundColor: colorOption.color }} />
+                <div className="w-6 h-6 rounded-full" style={{ backgroundColor: colorOption.color }} />
               </button>
             ))}
           </div>
@@ -603,10 +696,10 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
           ) : (
             <div
               onClick={handleCertificateUploadClick}
-              className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:bg-gray-50 transition-colors"
+              className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center cursor-pointer hover:bg-gray-50 transition-colors min-h-[140px] flex flex-col justify-center"
             >
-              <Plus className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-              <p className="text-sm text-gray-600 mb-1">건강 정보 기반의 짝궁 추천을 받을 수 있어요.</p>
+              <Plus className="w-8 h-8 text-gray-400 mx-auto mb-3" />
+              <p className="text-sm text-gray-600 mb-2">건강 정보 기반의 짝궁 추천을 받을 수 있어요.</p>
               <p className="text-xs text-gray-500">이미지 파일(JPG, PNG) 또는 PDF 파일 (최대 10MB)</p>
             </div>
           )}
@@ -616,7 +709,7 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
   )
 
   const renderIdealTypeTab = () => (
-    <div className="px-6 py-8 pb-32">
+    <div className="px-6 py-8 pb-24">
       <h2 className="text-2xl font-bold text-black mb-8">이상형 정보 등록</h2>
 
       <div className="space-y-6">
@@ -650,9 +743,8 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
               {idealTypeData.preferredAgeRange[0]} - {idealTypeData.preferredAgeRange[1]}개월
             </span>
           </div>
-          <div className="relative px-4">
+          <div className="relative px-4 mt-6">
             <div className="relative h-2 bg-gray-200 rounded-full">
-              {/* 선택된 범위 바 */}
               <div
                 className="absolute h-2 bg-black rounded-full"
                 style={{
@@ -660,12 +752,10 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
                   width: `${((idealTypeData.preferredAgeRange[1] - idealTypeData.preferredAgeRange[0]) / (180 - 1)) * 100}%`,
                 }}
               />
-              {/* 왼쪽 핸들 */}
               <div
                 className="absolute w-5 h-5 bg-white border-2 border-black rounded-full -translate-y-2 -translate-x-2.5 cursor-pointer"
                 style={{ left: `${((idealTypeData.preferredAgeRange[0] - 1) / (180 - 1)) * 100}%` }}
               />
-              {/* 오른쪽 핸들 */}
               <div
                 className="absolute w-5 h-5 bg-white border-2 border-black rounded-full -translate-y-2 -translate-x-2.5 cursor-pointer"
                 style={{ left: `${((idealTypeData.preferredAgeRange[1] - 1) / (180 - 1)) * 100}%` }}
@@ -693,9 +783,8 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
               kg
             </span>
           </div>
-          <div className="relative px-4">
+          <div className="relative px-4 mt-6">
             <div className="relative h-2 bg-gray-200 rounded-full">
-              {/* 선택된 범위 바 */}
               <div
                 className="absolute h-2 bg-black rounded-full"
                 style={{
@@ -703,12 +792,10 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
                   width: `${((idealTypeData.preferredWeightRange[1] - idealTypeData.preferredWeightRange[0]) / (50 - 0.1)) * 100}%`,
                 }}
               />
-              {/* 왼쪽 핸들 */}
               <div
                 className="absolute w-5 h-5 bg-white border-2 border-black rounded-full -translate-y-2 -translate-x-2.5 cursor-pointer"
                 style={{ left: `${((idealTypeData.preferredWeightRange[0] - 0.1) / (50 - 0.1)) * 100}%` }}
               />
-              {/* 오른쪽 핸들 */}
               <div
                 className="absolute w-5 h-5 bg-white border-2 border-black rounded-full -translate-y-2 -translate-x-2.5 cursor-pointer"
                 style={{ left: `${((idealTypeData.preferredWeightRange[1] - 0.1) / (50 - 0.1)) * 100}%` }}
@@ -739,11 +826,11 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
               <button
                 key={colorOption.name}
                 onClick={() => setIdealTypeData({ ...idealTypeData, preferredColor: colorOption.name })}
-                className={`h-16 rounded-lg border-2 flex items-center justify-center ${
+                className={`h-10 rounded-lg border-2 flex items-center justify-center ${
                   idealTypeData.preferredColor === colorOption.name ? "border-black" : "border-gray-300"
                 }`}
               >
-                <div className="w-8 h-8 rounded-full" style={{ backgroundColor: colorOption.color }} />
+                <div className="w-6 h-6 rounded-full" style={{ backgroundColor: colorOption.color }} />
               </button>
             ))}
           </div>
@@ -798,7 +885,7 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
   )
 
   const renderOwnerInfoTab = () => (
-    <div className="px-6 py-8 pb-32">
+    <div className="px-6 py-8 pb-24">
       <h2 className="text-2xl font-bold text-black mb-8">주인 정보 등록</h2>
 
       <div className="space-y-6">
@@ -900,10 +987,8 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
 
   // 네이버 지도 API 스크립트 로드 및 위치 정보 가져오기
   useEffect(() => {
-    // 위치정보 탭이 아니면 실행하지 않음
     if (activeTab !== 4) return
 
-    // 네이버 지도 API 스크립트 로드
     const loadNaverMapsScript = () => {
       if (typeof window !== "undefined" && !(window as any).naver) {
         const script = document.createElement("script")
@@ -911,10 +996,15 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
         script.src = "https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=wthem1ducp"
         script.async = true
         script.onload = () => {
+          console.log("네이버 지도 API 로딩 완료")
           setLocationData((prev) => ({ ...prev, mapLoaded: true }))
+        }
+        script.onerror = () => {
+          console.error("네이버 지도 API 로딩 실패")
         }
         document.head.appendChild(script)
       } else if ((window as any).naver) {
+        console.log("네이버 지도 API 이미 로딩됨")
         setLocationData((prev) => ({ ...prev, mapLoaded: true }))
       }
     }
@@ -926,6 +1016,7 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const { latitude, longitude, accuracy } = position.coords
+          console.log("현재 위치 획득:", { latitude, longitude, accuracy })
           setLocationData((prev) => ({
             ...prev,
             latitude,
@@ -948,17 +1039,21 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
 
   // 지도 초기화 및 마커 표시
   useEffect(() => {
-    // 위치정보 탭이 아니거나 지도가 로드되지 않았으면 실행하지 않음
-    if (activeTab !== 4 || !locationData.mapLoaded || typeof window === "undefined" || !(window as any).naver) return
+    if (activeTab !== 4 || !locationData.mapLoaded || typeof window === "undefined" || !(window as any).naver) {
+      return
+    }
 
     const mapContainer = document.getElementById("map")
-    if (!mapContainer) return
+    if (!mapContainer) {
+      return
+    }
 
+    console.log("지도 초기화 시작...")
     const naver = (window as any).naver
 
     const mapOptions = {
       center: new naver.maps.LatLng(locationData.latitude, locationData.longitude),
-      zoom: 15,
+      zoom: locationData.zoomLevel,
       zoomControl: true,
       zoomControlOptions: {
         style: naver.maps.ZoomControlStyle.SMALL,
@@ -967,6 +1062,7 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
     }
 
     const map = new naver.maps.Map("map", mapOptions)
+    console.log("지도 생성 완료")
 
     // 현재 위치 마커 추가
     const marker = new naver.maps.Marker({
@@ -977,6 +1073,31 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
           '<div style="width: 20px; height: 20px; background-color: #4285f4; border: 3px solid white; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.3);"></div>',
         anchor: new naver.maps.Point(10, 10),
       },
+    })
+
+    // 강아지 위치 마커들 추가
+    console.log("강아지 마커 추가 시작, 개수:", dogLocations.length)
+    dogLocations.forEach((dogLocation, index) => {
+      const heartIcon = {
+        content:
+          '<div style="color: #ff4757; font-size: 20px; text-shadow: 1px 1px 2px rgba(0,0,0,0.3); cursor: pointer;">❤️</div>',
+        size: new naver.maps.Size(20, 20),
+        anchor: new naver.maps.Point(10, 10),
+      }
+
+      const dogMarker = new naver.maps.Marker({
+        position: new naver.maps.LatLng(dogLocation.lat, dogLocation.lon),
+        map: map,
+        icon: heartIcon,
+      })
+
+      // 강아지 마커 클릭 이벤트
+      naver.maps.Event.addListener(dogMarker, "click", () => {
+        const infoWindow = new naver.maps.InfoWindow({
+          content: `<div style="padding: 10px; font-size: 12px;">🐕 강아지 위치<br/>${dogLocation.id}</div>`,
+        })
+        infoWindow.open(map, dogMarker)
+      })
     })
 
     // 정보창 추가
@@ -1005,40 +1126,68 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
         selectedLocation: "선택한 위치",
       }))
 
-      // 정보창 업데이트 및 열기
       infoWindow.setContent(`<div style="padding: 10px; font-size: 12px;">선택한 위치</div>`)
       infoWindow.open(map, marker)
     })
 
     return () => {
-      // 지도 정리
       if (map && map.destroy) {
         map.destroy()
       }
     }
-  }, [activeTab, locationData.mapLoaded, locationData.latitude, locationData.longitude])
+  }, [
+    activeTab,
+    locationData.mapLoaded,
+    locationData.latitude,
+    locationData.longitude,
+    locationData.zoomLevel,
+    dogLocations,
+  ])
 
   const renderLocationTab = () => {
-    // 근처 동네 옵션
-    const nearbyOptions = ["가까운 동네", "조금 가까운 동네", "조금 먼 동네", "먼 동네"]
+    const handleNearbyRangeChange = (option: string) => {
+      let zoomLevel = 15
+
+      switch (option) {
+        case "가까운 동네":
+          zoomLevel = 15
+          break
+        case "조금 가까운 동네":
+          zoomLevel = 14
+          break
+        case "조금 먼 동네":
+          zoomLevel = 13
+          break
+        case "먼 동네":
+          zoomLevel = 12
+          break
+      }
+
+      setLocationData({ ...locationData, nearbyRange: option, zoomLevel })
+    }
+
+    // 안내 메시지 추가
+    const helpMessage = (
+      <div className="mt-6 p-4 bg-blue-50 rounded-lg text-blue-800 text-sm">
+        <p className="font-medium mb-1">💡 도움말</p>
+        <p>지도가 보이지 않아도 걱정하지 마세요! 퍼블리시 후에는 정상적으로 표시됩니다.</p>
+        <p className="mt-1">아래 '완료' 버튼을 눌러 다음 단계로 진행할 수 있습니다.</p>
+      </div>
+    )
 
     return (
-      <div className="px-6 py-8 pb-32">
+      <div className="px-6 py-8 pb-24">
         <h2 className="text-2xl font-bold text-black mb-8">위치정보 등록</h2>
 
-        {/* 지도 상태 표시 */}
-        <div
-          className={`mb-4 p-3 rounded-md ${locationData.accuracy ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}
-        >
-          {locationData.accuracy ? (
-            <p className="text-sm">
-              현재 위치를 찾았습니다. (정확도: {Math.round(locationData.accuracy)}m)
-              <br />
-              지도를 클릭하여 위치를 변경할 수 있습니다.
-            </p>
-          ) : (
-            <p className="text-sm">위치 정보를 가져오는 중...</p>
-          )}
+        {/* 상태 정보 */}
+        <div className="mb-4 p-3 bg-gray-50 rounded-md text-sm space-y-1">
+          <p>🗺️ 지도 API: {locationData.mapLoaded ? "✅ 로딩 완료" : "⏳ 로딩 중..."}</p>
+          <p>🐕 강아지 데이터: {isLoadingDogData ? "⏳ 로딩 중..." : `✅ ${dogLocations.length}개 로딩됨`}</p>
+          {dogDataError && <p className="text-red-600">❌ 에러: {dogDataError}</p>}
+          <p>
+            📍 현재 위치:{" "}
+            {locationData.accuracy ? `✅ 정확도 ${Math.round(locationData.accuracy)}m` : "⏳ 위치 확인 중..."}
+          </p>
         </div>
 
         {/* 지도 영역 */}
@@ -1047,21 +1196,21 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
           className="relative w-full h-96 mb-8 rounded-lg overflow-hidden bg-gray-100 border border-gray-300"
         >
           {!locationData.mapLoaded && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
-              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-black"></div>
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-100">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-black mb-4"></div>
+              <p className="text-gray-600">지도를 불러오는 중...</p>
             </div>
           )}
         </div>
 
-        {/* 근처 동네 선택 - 버튼 형태로 변경 */}
-        {/* 근처 동네 선택 - 타원형 버튼으로 변경 */}
+        {/* 근처 동네 선택 */}
         <div className="space-y-4 mt-6">
           <h3 className="text-lg font-medium text-black">근처 동네 범위</h3>
           <div className="flex justify-between w-full">
             {["가까운 동네", "조금 가까운 동네", "조금 먼 동네", "먼 동네"].map((option) => (
               <button
                 key={option}
-                onClick={() => setLocationData({ ...locationData, nearbyRange: option })}
+                onClick={() => handleNearbyRangeChange(option)}
                 className={`py-2 px-4 rounded-full border ${
                   locationData.nearbyRange === option
                     ? "bg-black text-white border-black"
@@ -1105,6 +1254,16 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
           <MapPin className="w-5 h-5" />
           현재 위치로 재설정
         </button>
+
+        {/* 강아지 위치 데이터 다시 로드 버튼 */}
+        <button
+          onClick={loadDogLocations}
+          disabled={isLoadingDogData}
+          className="w-full mt-4 py-3 bg-red-100 hover:bg-red-200 text-red-800 font-medium rounded-md flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          ❤️ {isLoadingDogData ? "로딩 중..." : "강아지 위치 데이터 다시 로드"}
+        </button>
+        {helpMessage}
       </div>
     )
   }
@@ -1120,7 +1279,7 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
       </div>
 
       {/* Tab Navigation */}
-      <div className="px-6 py-4">
+      <div className="px-6 py-4 mb-4">
         <div className="flex space-x-4 overflow-x-auto">
           {tabs.map((tab, index) => (
             <button
@@ -1137,37 +1296,152 @@ export default function UpdateProfile({ onClose, onComplete, initialData }: Upda
       </div>
 
       {/* Content */}
-      {activeTab === 0 && renderPhotoTab()}
-      {activeTab === 1 && renderProfileTab()}
-      {activeTab === 2 && renderIdealTypeTab()}
-      {activeTab === 3 && renderOwnerInfoTab()}
-      {activeTab === 4 && renderLocationTab()}
+      <div className="pb-24">
+        {activeTab === 0 && renderPhotoTab()}
+        {activeTab === 1 && renderProfileTab()}
+        {activeTab === 2 && renderIdealTypeTab()}
+        {activeTab === 3 && renderOwnerInfoTab()}
+        {activeTab === 4 && renderLocationTab()}
+      </div>
 
       {/* Bottom Button */}
-      <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto p-6 bg-white border-t">
-        <div className="grid grid-cols-2 gap-4">
-          {activeTab > 0 && (
+      <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t shadow-lg">
+        <div className="px-6 pt-4 pb-2">
+          <div className="grid grid-cols-2 gap-4">
+            {activeTab > 0 && (
+              <Button
+                onClick={handlePrevious}
+                className="h-12 bg-white hover:bg-gray-100 text-black border border-gray-300 text-base font-medium rounded-md"
+              >
+                이전
+              </Button>
+            )}
             <Button
-              onClick={handlePrevious}
-              className="h-14 bg-white hover:bg-gray-100 text-black border border-gray-300 text-lg font-medium rounded-md"
+              onClick={handleNext}
+              className={`h-12 bg-black hover:bg-black/90 text-white text-base font-bold rounded-md ${
+                activeTab === 0 ? "col-span-2" : ""
+              }`}
             >
-              이전
+              <span className="text-white">{activeTab === 4 ? "완료" : "다음"}</span>
             </Button>
-          )}
-          <Button
-            onClick={handleNext}
-            className={`h-14 bg-black hover:bg-black/90 text-white text-lg font-medium rounded-md ${
-              activeTab === 0 ? "col-span-2" : ""
-            }`}
-            disabled={
-              (activeTab === 0 && images.length === 0) ||
-              (activeTab === 1 && !isProfileValid()) ||
-              (activeTab === 2 && !isIdealTypeValid()) ||
-              (activeTab === 3 && !isOwnerInfoValid())
-            }
-          >
-            {activeTab === 4 ? "완료" : "다음"}
-          </Button>
+          </div>
+        </div>
+
+        {/* 네비게이션 바 */}
+        <div className="flex justify-around items-center py-2 bg-white border-t border-gray-200">
+          <div className="flex flex-col items-center py-2">
+            <div className="w-6 h-6 mb-1">
+              <svg viewBox="0 0 24 24" fill="none" className="w-full h-full text-gray-400">
+                <path
+                  d="M3 9L12 2L21 9V20C21 20.5304 20.7893 21.0391 20.4142 21.4142C20.0391 21.7893 19.5304 22 19 22H5C4.46957 22 3.96086 21.7893 3.58579 21.4142C3.21071 21.0391 3 20.5304 3 20V9Z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M9 22V12H15V22"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <span className="text-xs text-gray-400">로그인</span>
+          </div>
+
+          <div className="flex flex-col items-center py-2">
+            <div className="w-6 h-6 mb-1">
+              <svg viewBox="0 0 24 24" fill="none" className="w-full h-full text-black">
+                <path
+                  d="M20 21V19C20 17.9391 19.5786 16.9217 18.8284 16.1716C18.0783 15.4214 17.0609 15 16 15H8C6.93913 15 5.92172 15.4214 5.17157 16.1716C4.42143 16.9217 4 17.9391 4 19V21"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <circle
+                  cx="12"
+                  cy="7"
+                  r="4"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <span className="text-xs text-black font-medium">프로필</span>
+          </div>
+
+          <div className="flex flex-col items-center py-2">
+            <div className="w-6 h-6 mb-1">
+              <svg viewBox="0 0 24 24" fill="none" className="w-full h-full text-gray-400">
+                <path
+                  d="M20.84 4.61C19.32 3.04 17.13 3.04 15.61 4.61L12 8.22L8.39 4.61C6.87 3.04 4.68 3.04 3.16 4.61C1.64 6.18 1.64 8.37 3.16 9.94L12 18.78L20.84 9.94C22.36 8.37 22.36 6.18 20.84 4.61Z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <span className="text-xs text-gray-400">매칭</span>
+          </div>
+
+          <div className="flex flex-col items-center py-2">
+            <div className="w-6 h-6 mb-1">
+              <svg viewBox="0 0 24 24" fill="none" className="w-full h-full text-gray-400">
+                <path
+                  d="M21 15C21 15.5304 20.7893 16.0391 20.4142 16.4142C20.0391 16.7893 19.5304 17 19 17H7L3 21V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H19C19.5304 3 20.0391 3.21071 20.4142 3.58579C20.7893 3.96086 21 4.46957 21 5V15Z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <span className="text-xs text-gray-400">메시지</span>
+          </div>
+
+          <div className="flex flex-col items-center py-2">
+            <div className="w-6 h-6 mb-1">
+              <svg viewBox="0 0 24 24" fill="none" className="w-full h-full text-gray-400">
+                <path
+                  d="M17 21V19C17 17.9391 16.5786 16.9217 15.8284 16.1716C15.0783 15.4214 14.0609 15 13 15H5C3.93913 15 2.92172 15.4214 2.17157 16.1716C1.42143 16.9217 1 17.9391 1 19V21"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <circle
+                  cx="9"
+                  cy="7"
+                  r="4"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M23 21V19C23 18.1645 22.7155 17.3541 22.2094 16.7006C21.7033 16.047 20.9999 15.5866 20.2 15.3954"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M16 3.13C16.8003 3.32127 17.5037 3.78167 18.0098 4.43524C18.5159 5.08882 18.8003 5.89925 18.8003 6.735C18.8003 7.57075 18.5159 8.38118 18.0098 9.03476C17.5037 9.68833 16.8003 10.1487 16 10.34"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+            <span className="text-xs text-gray-400">게시판</span>
+          </div>
         </div>
       </div>
     </div>
